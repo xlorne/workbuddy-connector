@@ -38,9 +38,12 @@ java -jar target/workbuddy-connector-1.0.0.jar      # 端口 3100
 
 ```bash
 python3 scripts/verify_oauth_flow.py      # OAuth 授权全链路（8 步）
-python3 scripts/verify_token_refresh.py   # token 过期与静默续期（7 步）
+python3 scripts/verify_token_refresh.py   # access_token 过期与静默续期（7 步）
+python3 scripts/verify_refresh_expiry.py  # refresh_token 超期 → 需重新授权（6 步）
 python3 scripts/verify_mcp.py             # MCP 协议握手与工具调用
 ```
+
+> 两个续期脚本需服务端以秒级 TTL 启动，命令见脚本头部注释。
 
 ---
 
@@ -62,7 +65,7 @@ python3 scripts/verify_mcp.py             # MCP 协议握手与工具调用
 | 文档 | 读者 | 内容 |
 |---|---|---|
 | [对接说明手册](docs/对接说明手册.md) | 接入方、运维 | 接入步骤、配置、工具清单、Token 生命周期、FAQ、上线清单 |
-| [技术开发说明](docs/技术开发说明.md) | 开发者 | 架构设计、组件原理、扩展指南、缺陷记录、生产化改造 |
+| [技术开发说明](docs/技术开发说明.md) | 开发者 | 架构设计、组件原理、扩展指南、验证与测试、生产化改造 |
 
 ---
 
@@ -71,10 +74,11 @@ python3 scripts/verify_mcp.py             # MCP 协议握手与工具调用
 ```
 ├── docs/                    文档
 ├── scripts/                 验证脚本与启动脚本
-│   ├── verify_oauth_flow.py     OAuth 授权链路验证
-│   ├── verify_token_refresh.py  token 续期验证
-│   ├── verify_mcp.py            MCP 协议验证
-│   └── start.sh                 启动脚本
+│   ├── verify_oauth_flow.py        OAuth 授权链路验证
+│   ├── verify_token_refresh.py     access_token 过期与续期验证
+│   ├── verify_refresh_expiry.py    refresh_token 超期验证
+│   ├── verify_mcp.py               MCP 协议验证
+│   └── start.sh                    启动脚本
 └── src/main/java/com/workbuddy/connector/
     ├── config/              配置与安全（OAuth、验签、双模式安全链）
     ├── identity/            身份解析（核心）

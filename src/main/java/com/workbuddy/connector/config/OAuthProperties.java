@@ -2,6 +2,7 @@ package com.workbuddy.connector.config;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -63,6 +64,12 @@ public class OAuthProperties {
 
     /** refresh_token 有效期（天）。过期后必须重新授权。 */
     private long refreshTokenTtlDays = 30;
+
+    /**
+     * refresh_token 有效期（秒），<b>仅供联调验证过期行为</b>：
+     * 大于 0 时覆盖 {@link #refreshTokenTtlDays}（天级粒度无法在联调中观察）。
+     */
+    private long refreshTokenTtlSeconds = 0;
 
     /** refresh_token 最大保存数量，防止内存无界增长。 */
     private int maxRefreshTokens = 1000;
@@ -173,6 +180,21 @@ public class OAuthProperties {
 
     public void setRefreshTokenTtlDays(long refreshTokenTtlDays) {
         this.refreshTokenTtlDays = refreshTokenTtlDays;
+    }
+
+    public long getRefreshTokenTtlSeconds() {
+        return refreshTokenTtlSeconds;
+    }
+
+    public void setRefreshTokenTtlSeconds(long refreshTokenTtlSeconds) {
+        this.refreshTokenTtlSeconds = refreshTokenTtlSeconds;
+    }
+
+    /** 实际生效的 refresh_token 有效期。 */
+    public Duration effectiveRefreshTokenTtl() {
+        return refreshTokenTtlSeconds > 0
+                ? Duration.ofSeconds(refreshTokenTtlSeconds)
+                : Duration.ofDays(refreshTokenTtlDays);
     }
 
     public int getMaxRefreshTokens() {

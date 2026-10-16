@@ -15,6 +15,11 @@ Token 过期与自动续期（refresh_token）验证。
   5. 用 refresh_token 换新 token → 200，且拿到新的 access_token 与 refresh_token
   6. 用新 access_token 调用 → 200（续期成功，业务无感）
   7. 重放旧 refresh_token → 400（轮换生效，防重放）
+
+运行前提（服务端以短 TTL 启动，便于在秒级观察过期行为）：
+  java -jar target/workbuddy-connector-1.0.0.jar \\
+    --workbuddy.oauth.access-token-ttl-seconds=6 \\
+    --workbuddy.oauth.clock-skew-seconds=0
 """
 import base64, hashlib, http.client, json, re, secrets, sys, time
 from urllib.parse import urlencode, urlparse, parse_qs

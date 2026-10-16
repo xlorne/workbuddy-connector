@@ -43,15 +43,21 @@ public class OAuthChallengeEntryPoint implements AuthenticationEntryPoint {
         java.net.URI u = java.net.URI.create(properties.getResource());
         String origin = u.getScheme() + "://" + u.getAuthority();
         String metadataUrl = origin + "/.well-known/oauth-protected-resource" + properties.getResourcePath();
-        String challenge = String.format(
-                "Bearer realm=\"%s\", resource_metadata=\"%s\"",
-                properties.getRealm(), metadataUrl);
+        // RFC 6750 §3：若请求带了 token 但被拒绝（如已过期），挑战中应带 error="invalid_token"。
+        // 客户端据此区分「从未授权」与「凭证已失效」，前者发起完整授权、后者先尝试续期。
+        boolean tokenPresented = request.getHeader(HttpHeaders.AUTHORIZATION) != null;
+        StringBuilder challenge = new StringBuilder("Bearer realm=\"").append(properties.getRealm()).append("\"");
+        if (tokenPresented) {
+            challenge.append(", error=\"invalid_token\", error_description=\"The access token expired or is invalid\"");
+        }
+        challenge.append(", resource_metadata=\"").append(metadataUrl).append("\"");
 
-        log.info("[OAUTH-CHALLENGE] 未认证请求 {} {} → 返回 401，提示客户端去 {} 发现授权服务器",
-                request.getMethod(), request.getRequestURI(), metadataUrl);
+        log.info("[OAUTH-CHALLENGE] 未认证请求 {} {}（{}）→ 返回 401，提示客户端去 {} 发现授权服务器",
+                request.getMethod(), request.getRequestURI(),
+                tokenPresented ? "携带的 token 已失效" : "未携带 token", metadataUrl);
 
         response.setStatus(HttpStatus.UNAUTHORIZED.value());
-        response.setHeader(HttpHeaders.WWW_AUTHENTICATE, challenge);
+        response.setHeader(HttpHeaders.WWW_AUTHENTICATE, challenge.toString());
         response.setContentType("application/json;charset=UTF-8");
         response.getWriter().write("""
                 {"error":"invalid_token","error_description":"Authentication required. \

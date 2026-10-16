@@ -176,14 +176,19 @@ public class EmbeddedOAuthAuthorizationServer {
             // 轮换：refresh_token 一次性使用，消费后立即作废，并签发新的一对
             RefreshToken stored = refreshTokens.remove(rt);
             if (stored == null) {
-                log.warn("[OAUTH-AS] refresh_token 无效或已被使用（可能被重放）");
+                // 已被使用、伪造，或过期太久已被清理——对客户端而言处理方式相同：
+                // 本地凭证作废，重新走一次完整授权。
+                log.warn("[OAUTH-AS] refresh_token 无效、已被使用或已被清理 → 需重新授权");
                 return ResponseEntity.badRequest().body(Map.of("error", "invalid_grant",
-                        "error_description", "refresh token invalid or already used"));
+                        "error_description", "refresh token invalid, already used or expired; "
+                                + "re-authorization required"));
             }
             if (stored.expiresAt().isBefore(Instant.now())) {
-                log.warn("[OAUTH-AS] refresh_token 已过期 user={}", stored.userId());
+                // 刷新令牌超期：这是「长期未使用」的正常归宿，用户需重新登录一次
+                log.warn("[OAUTH-AS] refresh_token 已过期 user={}（超过 {} 未续期）→ 需重新授权",
+                        stored.userId(), properties.effectiveRefreshTokenTtl());
                 return ResponseEntity.badRequest().body(Map.of("error", "invalid_grant",
-                        "error_description", "refresh token expired, re-authorization required"));
+                        "error_description", "refresh token expired; re-authorization required"));
             }
             // 刷新令牌绑定客户端，防止被其他客户端盗用
             if (clientId != null && !clientId.equals(stored.clientId())) {
@@ -239,7 +244,8 @@ public class EmbeddedOAuthAuthorizationServer {
         // refresh_token 是长期凭证：access_token 过期后靠它续期，
         // 因此它的有效期必须明显长于 access_token，否则用户会被频繁要求重新授权。
         String refreshToken = UUID.randomUUID().toString().replace("-", "");
-        Instant refreshExpiry = Instant.now().plus(Duration.ofDays(properties.getRefreshTokenTtlDays()));
+        Duration refreshTtl = properties.effectiveRefreshTokenTtl();
+        Instant refreshExpiry = Instant.now().plus(refreshTtl);
         purgeExpiredRefreshTokens();
         refreshTokens.put(refreshToken, new RefreshToken(userId, clientId, refreshExpiry));
 
@@ -247,8 +253,9 @@ public class EmbeddedOAuthAuthorizationServer {
         resp.put("access_token", accessToken);
         resp.put("token_type", "Bearer");
         resp.put("expires_in", ttl);
+        // 告知客户端刷新令牌何时失效，便于其提前重新授权而不是等请求失败
         resp.put("refresh_token", refreshToken);
-        resp.put("refresh_expires_in", Duration.ofDays(properties.getRefreshTokenTtlDays()).toSeconds());
+        resp.put("refresh_expires_in", refreshTtl.toSeconds());
         resp.put("scope", String.join(" ", properties.getScopesSupported()));
         return resp;
     }

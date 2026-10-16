@@ -1,0 +1,155 @@
+# ============================================================================
+#  WorkBuddy Connector —— 日程数据接入验证 MCP 服务
+#
+#  【重要】WorkBuddy IDE 会向子进程注入 SERVER__PORT 环境变量（IDE 自身服务端口，
+#  例如 50430）。Spring Boot 的 relaxed binding 会把 SERVER__PORT 当作 server.port
+#  的高优先级来源，从而静默覆盖本文件里配置的 3100，导致 MCP 客户端按配置连不上。
+#  这里用 spring.config.import 之外的显式属性把它固定住，详见 README 的「端口被占用/连不上」章节。
+# ============================================================================
+
+server:
+  # 端口由启动类以「命令行参数」方式注入（优先级高于环境变量），
+  # 详见 WorkbuddyConnectorApplication#withPortDefaults 的注释。
+  # 如需改端口：设置环境变量 WORKBUDDY_CONNECTOR_PORT，或启动时加 --server.port=xxxx
+  port: 3100
+  address: 127.0.0.1
+  servlet:
+    encoding:
+      charset: UTF-8
+      force: true
+  tomcat:
+    threads:
+      # SSE 是长连接，一个客户端连接会独占一个线程。
+      # WorkBuddy 可能同时保持多个 SSE 连接，线程数留足余量，
+      # 否则 POST /mcp/message 会因为拿不到线程而无响应。
+      max: 200
+      min-spare: 20
+
+spring:
+  application:
+    name: workbuddy-connector
+
+  ai:
+    mcp:
+      server:
+        name: workbuddy-connector
+        version: 1.0.0
+        # ⚠️ 传输协议：MCP OAuth 授权链路要求使用 Streamable HTTP。
+        # SSE 是旧版传输，实测与 WorkBuddy 的 OAuth 管理器配合不生效
+        # （服务端返回 401 后客户端不会发起 OAuth 发现）。
+        # Streamable HTTP 端点默认 /mcp，对应 mcp.json 里 type=streamableHttp。
+        protocol: STREAMABLE
+        streamable-http:
+          mcp-endpoint: /mcp
+        capabilities:
+          tool: true
+          resource: true
+          prompt: true
+        instructions: |
+          日程数据接入验证 MCP 服务。用于验证 WorkBuddy 客户端调用时的参数传递，
+          尤其是企业统一认证(OAuth 2.1)下的登录人标识透传。
+          可调用 whoami 查看当前登录人，echo_call_context 回显完整调用上下文。
+
+  # OAuth2 资源服务器：接入企业真实认证中心时，取消下面注释并填入实际地址。
+  # 未配置时服务运行在「仅观测」模式：收到 Bearer token 会解析其内容但不强制验签。
+  # security:
+  #   oauth2:
+  #     resourceserver:
+  #       jwt:
+  #         issuer-uri: https://your-company.com/oauth2
+  #         jwk-set-uri: https://your-company.com/oauth2/jwks
+
+workbuddy:
+  server:
+    port: 3100
+
+  # ==========================================================================
+  #  OAuth 2.1 资源服务器 —— 多用户场景下识别「当前访问人」的官方机制
+  #
+  #  challenge-enabled=false（默认）：观测模式，全放通。
+  #      WorkBuddy 不会触发 OAuth，服务端拿不到用户身份，
+  #      适合联调第一步「先看清客户端传了什么」。
+  #
+  #  challenge-enabled=true：资源服务器模式。
+  #      MCP 端点对未认证请求返回 401 + WWW-Authenticate，
+  #      WorkBuddy 会据此自动走 OAuth 2.1 + PKCE 流程，
+  #      让用户用【企业账号】登录，最终把【用户绑定的 token】带上来。
+  #      此时务必同时配置 spring.security.oauth2.resourceserver.jwt.issuer-uri，
+  #      否则服务端无法验签企业签发的 token。
+  # ==========================================================================
+  oauth:
+    # 【核心开关】true = OAuth 资源服务器模式：
+    #   MCP 端点对未认证请求返回 401 + WWW-Authenticate，
+    #   WorkBuddy 据此自动走 OAuth 2.1 + PKCE，用户登录后带上【用户绑定的 token】。
+    challenge-enabled: true
+
+    # 本 MCP 服务的规范地址（RFC 8707 resource）——必须与 MCP 端点一致
+    resource: http://localhost:3100/mcp
+    resource-path: /mcp
+
+    # 内置授权服务器（仅本地联调）。
+    #   true  = 使用内置的注册/授权/登录/令牌端点，可脱离企业 SSO 走通完整授权流程
+    #   false = 对接企业统一认证中心（见下方 authorization-servers）
+    embedded: true
+    embedded-issuer: http://localhost:3100
+    # 演示账号（生产环境务必删除）
+    demo-users:
+      zhangsan: "123456"
+      lisi: "123456"
+      wangwu: "123456"
+
+    # 【生产环境】企业统一认证中心地址（embedded=false 时生效）
+    # 示例：
+    #   - Keycloak    : https://sso.your-company.com/realms/your-realm
+    #   - 内部统一认证 : https://sso.your-company.com
+    authorization-servers: []
+
+    scopes-supported:
+      - openid
+      - profile
+    realm: workbuddy-connector
+
+  capture:
+    # 排查抓包过滤器是否干扰 MCP 长连接时，可临时设为 false 做对照实验
+    enabled: true
+    max-records: 200
+    max-body-chars: 8000
+  identity:
+    # 联调后建议按企业真实实现收敛此列表
+    mask-token: false
+    identity-headers:
+      - x-wb-user-id
+      - x-wb-username
+      - x-wb-corpuserid
+      - x-wecom-userid
+      - x-wx-userid
+      - x-user-id
+      - x-userid
+      - x-employee-id
+      - x-staff-id
+      - x-login-user
+      - x-authenticated-user
+      - x-forwarded-user
+      - x-forwarded-user-email
+      - x-forwarded-email
+      - x-forwarded-for
+      - x-real-ip
+      - remote-user
+    user-id-claims:
+      - sub
+      - user_name
+      - username
+      - preferred_username
+      - userid
+      - user_id
+      - corp_userid
+      - staff_id
+      - employee_id
+      - login_name
+      - email
+
+logging:
+  level:
+    com.workbuddy.connector: INFO
+  pattern:
+    console: "%d{HH:mm:ss.SSS} %-5level %logger{36} - %msg%n"

@@ -5,11 +5,15 @@ import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.security.oauth2.core.DelegatingOAuth2TokenValidator;
 import org.springframework.security.oauth2.jwt.JwtDecoder;
+import org.springframework.security.oauth2.jwt.JwtTimestampValidator;
+import org.springframework.security.oauth2.jwt.JwtValidators;
 import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
 
 import javax.crypto.spec.SecretKeySpec;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 
 /**
  * JWT 验签配置。
@@ -44,6 +48,17 @@ public class JwtDecoderConfig {
 
         SecretKeySpec key = new SecretKeySpec(
                 properties.getSigningSecret().getBytes(StandardCharsets.UTF_8), "HmacSHA256");
-        return NimbusJwtDecoder.withSecretKey(key).build();
+        NimbusJwtDecoder decoder = NimbusJwtDecoder.withSecretKey(key).build();
+
+        // 显式配置时间戳容差（Spring Security 默认 60 秒）。
+        // 若不为 0，access_token 过期后仍会在容差窗口内被视为有效——
+        // 这在生产上用于容忍时钟漂移，但联调验证「过期→401→续期」时应设为 0。
+        long skew = properties.getClockSkewSeconds();
+        decoder.setJwtValidator(new DelegatingOAuth2TokenValidator<>(
+                JwtValidators.createDefaultWithIssuer(properties.getEmbeddedIssuer()),
+                new JwtTimestampValidator(Duration.ofSeconds(skew))));
+        log.info("JWT 验签时钟容差: {}s", skew);
+
+        return decoder;
     }
 }

@@ -18,6 +18,7 @@ import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.Base64;
 import java.util.LinkedHashMap;
@@ -58,8 +59,8 @@ public class EmbeddedOAuthAuthorizationServer {
     private final Map<String, PendingAuth> pending = new ConcurrentHashMap<>();
     /** 已签发的授权码：code → 授权码上下文 */
     private final Map<String, AuthCode> codes = new ConcurrentHashMap<>();
-    /** 刷新令牌：refresh_token → 用户标识 */
-    private final Map<String, String> refreshTokens = new ConcurrentHashMap<>();
+    /** 刷新令牌：token → (用户, 绑定客户端, 过期时间)。 */
+    private final Map<String, RefreshToken> refreshTokens = new ConcurrentHashMap<>();
 
     public EmbeddedOAuthAuthorizationServer(OAuthProperties properties, ObjectMapper objectMapper) {
         this.properties = properties;
@@ -170,11 +171,29 @@ public class EmbeddedOAuthAuthorizationServer {
 
         if ("refresh_token".equals(grantType)) {
             String rt = form.get("refresh_token");
-            String user = refreshTokens.get(rt);
-            if (user == null) {
-                return ResponseEntity.badRequest().body(Map.of("error", "invalid_grant"));
+            String clientId = form.get("client_id");
+
+            // 轮换：refresh_token 一次性使用，消费后立即作废，并签发新的一对
+            RefreshToken stored = refreshTokens.remove(rt);
+            if (stored == null) {
+                log.warn("[OAUTH-AS] refresh_token 无效或已被使用（可能被重放）");
+                return ResponseEntity.badRequest().body(Map.of("error", "invalid_grant",
+                        "error_description", "refresh token invalid or already used"));
             }
-            return ResponseEntity.ok(issueTokens(user));
+            if (stored.expiresAt().isBefore(Instant.now())) {
+                log.warn("[OAUTH-AS] refresh_token 已过期 user={}", stored.userId());
+                return ResponseEntity.badRequest().body(Map.of("error", "invalid_grant",
+                        "error_description", "refresh token expired, re-authorization required"));
+            }
+            // 刷新令牌绑定客户端，防止被其他客户端盗用
+            if (clientId != null && !clientId.equals(stored.clientId())) {
+                log.warn("[OAUTH-AS] refresh_token 的 client_id 不匹配");
+                return ResponseEntity.badRequest().body(Map.of("error", "invalid_grant",
+                        "error_description", "client_id mismatch"));
+            }
+
+            log.info("[OAUTH-AS] 刷新令牌成功 user={}（access_token 已续期）", stored.userId());
+            return ResponseEntity.ok(issueTokens(stored.userId(), stored.clientId()));
         }
 
         String code = form.get("code");
@@ -208,24 +227,44 @@ public class EmbeddedOAuthAuthorizationServer {
         }
 
         log.info("[OAUTH-AS] 令牌交换成功 user={}", ac.userId());
-        return ResponseEntity.ok(issueTokens(ac.userId()));
+        return ResponseEntity.ok(issueTokens(ac.userId(), ac.clientId()));
     }
 
     // ------------------------------------------------------------------ 内部工具
 
-    private Map<String, Object> issueTokens(String userId) {
+    private Map<String, Object> issueTokens(String userId, String clientId) {
         long ttl = properties.getAccessTokenTtlSeconds();
         String accessToken = signJwt(userId, ttl);
+
+        // refresh_token 是长期凭证：access_token 过期后靠它续期，
+        // 因此它的有效期必须明显长于 access_token，否则用户会被频繁要求重新授权。
         String refreshToken = UUID.randomUUID().toString().replace("-", "");
-        refreshTokens.put(refreshToken, userId);
+        Instant refreshExpiry = Instant.now().plus(Duration.ofDays(properties.getRefreshTokenTtlDays()));
+        purgeExpiredRefreshTokens();
+        refreshTokens.put(refreshToken, new RefreshToken(userId, clientId, refreshExpiry));
 
         Map<String, Object> resp = new LinkedHashMap<>();
         resp.put("access_token", accessToken);
         resp.put("token_type", "Bearer");
         resp.put("expires_in", ttl);
         resp.put("refresh_token", refreshToken);
+        resp.put("refresh_expires_in", Duration.ofDays(properties.getRefreshTokenTtlDays()).toSeconds());
         resp.put("scope", String.join(" ", properties.getScopesSupported()));
         return resp;
+    }
+
+    /** 清理过期令牌；若仍超上限则淘汰最早过期的，防止内存无界增长。 */
+    private void purgeExpiredRefreshTokens() {
+        Instant now = Instant.now();
+        refreshTokens.entrySet().removeIf(e -> e.getValue().expiresAt().isBefore(now));
+
+        int max = properties.getMaxRefreshTokens();
+        while (refreshTokens.size() >= max) {
+            refreshTokens.entrySet().stream()
+                    .min(java.util.Comparator.comparing(e -> e.getValue().expiresAt()))
+                    .map(Map.Entry::getKey)
+                    .ifPresent(refreshTokens::remove);
+        }
     }
 
     /** 用 HMAC-SHA256 签发 JWT（仅本地联调；生产由企业 SSO 用非对称密钥签发）。 */
@@ -349,5 +388,9 @@ public class EmbeddedOAuthAuthorizationServer {
 
     private record AuthCode(String userId, String clientId, String redirectUri, String codeChallenge,
                             String codeChallengeMethod, Instant expiresAt) {
+    }
+
+    /** 刷新令牌记录：绑定用户与客户端，并记录过期时间。 */
+    private record RefreshToken(String userId, String clientId, Instant expiresAt) {
     }
 }

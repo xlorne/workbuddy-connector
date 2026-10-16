@@ -109,6 +109,15 @@ workbuddy:
       - profile
     realm: workbuddy-connector
 
+    # ---- Token 生命周期（决定「过期后会 401 吗」这一问题的答案）----
+    # access_token 故意短期：泄露时影响面小；到期后靠 refresh_token 静默续期。
+    access-token-ttl-seconds: 3600      # 1 小时（生产建议 900~3600）
+    refresh-token-ttl-days: 30          # 30 天（生产建议 ≥30，OAuth 2.1 要求）
+    max-refresh-tokens: 1000            # 内存中保留的刷新令牌上限，防无界增长
+    # JWT 时间戳时钟容差。默认 60s 用于容忍客户端/服务端时钟漂移；
+    # 验证「过期→401→续期」链路时设为 0，否则过期 60 秒内仍会被判为有效。
+    clock-skew-seconds: 60
+
   capture:
     # 排查抓包过滤器是否干扰 MCP 长连接时，可临时设为 false 做对照实验
     enabled: true

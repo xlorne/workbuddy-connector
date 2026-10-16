@@ -37,6 +37,7 @@ java -jar target/workbuddy-connector-1.0.0.jar
 
 # 一键验证
 python3 scripts/verify_oauth_flow.py   # OAuth 完整授权链路（8 步）
+python3 scripts/verify_token_refresh.py # token 过期 → 401 → 静默续期
 python3 scripts/verify_mcp.py          # MCP 协议握手 + 工具调用
 ```
 

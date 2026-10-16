@@ -58,8 +58,23 @@ public class OAuthProperties {
     /** 内置授权服务器的演示用户目录（用户名 → 密码）。生产环境绝不使用。 */
     private Map<String, String> demoUsers = new HashMap<>(Map.of("zhangsan", "123456"));
 
-    /** 签发的 access_token 有效期（秒）。 */
+    /** 签发的 access_token 有效期（秒）。短期以降低泄露风险，靠 refresh_token 续期。 */
     private long accessTokenTtlSeconds = 3600;
+
+    /** refresh_token 有效期（天）。过期后必须重新授权。 */
+    private long refreshTokenTtlDays = 30;
+
+    /** refresh_token 最大保存数量，防止内存无界增长。 */
+    private int maxRefreshTokens = 1000;
+
+    /**
+     * JWT 时间戳校验的时钟容差（秒）。
+     *
+     * <p>用于容忍客户端与服务端的时钟漂移 —— 若不设容差，
+     * 客户端稍快几秒就会把「刚签发」的 token 判为未生效。
+     * 默认 60 秒（Spring Security 默认值）。联调验证 token 过期时可设为 0。
+     */
+    private long clockSkewSeconds = 60;
 
     /** 内置授权服务器的对称签名密钥（仅联调）。 */
     private String signingSecret = "workbuddy-connector-local-dev-only-secret-key-32b";
@@ -150,6 +165,30 @@ public class OAuthProperties {
 
     public void setAccessTokenTtlSeconds(long accessTokenTtlSeconds) {
         this.accessTokenTtlSeconds = accessTokenTtlSeconds;
+    }
+
+    public long getRefreshTokenTtlDays() {
+        return refreshTokenTtlDays;
+    }
+
+    public void setRefreshTokenTtlDays(long refreshTokenTtlDays) {
+        this.refreshTokenTtlDays = refreshTokenTtlDays;
+    }
+
+    public int getMaxRefreshTokens() {
+        return maxRefreshTokens;
+    }
+
+    public void setMaxRefreshTokens(int maxRefreshTokens) {
+        this.maxRefreshTokens = maxRefreshTokens;
+    }
+
+    public long getClockSkewSeconds() {
+        return clockSkewSeconds;
+    }
+
+    public void setClockSkewSeconds(long clockSkewSeconds) {
+        this.clockSkewSeconds = clockSkewSeconds;
     }
 
     public String getSigningSecret() {
